@@ -15,6 +15,10 @@ provider "aws" {
 # S3 bucket for static website hosting
 resource "aws_s3_bucket" "portfolio" {
   bucket = "weslayer-portfolio"
+
+  lifecycle {
+    prevent_destroy = true  # Prevent accidental deletion of the bucket
+  }
 }
 
 # S3 bucket configuration for static website hosting
@@ -96,6 +100,11 @@ output "cloudfront_domain" {
   value = aws_cloudfront_distribution.portfolio.domain_name
 }
 
+# Output the CloudFront distribution ID
+output "cloudfront_id" {
+  value = aws_cloudfront_distribution.portfolio.id
+}
+
 # Output the S3 bucket website endpoint
 output "s3_website_endpoint" {
   value = aws_s3_bucket_website_configuration.portfolio.website_endpoint
@@ -143,4 +152,9 @@ resource "aws_s3_bucket_policy" "portfolio" {
       }
     ]
   })
+}
+
+# Output the bucket name for reference
+output "bucket_name" {
+  value = aws_s3_bucket.portfolio.bucket
 } 

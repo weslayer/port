@@ -43,44 +43,8 @@ jobs:
 
     - name: Deploy to S3
       run: |
-        aws s3 sync src/.next/static s3://${{ env.S3_BUCKET }}/_next/static --delete
-        aws s3 sync src/public s3://${{ env.S3_BUCKET }}/public --delete
         aws s3 sync src/out s3://${{ env.S3_BUCKET }} --delete
 
     - name: Invalidate CloudFront Cache
       run: |
         aws cloudfront create-invalidation --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} --paths "/*"
-
-  terraform:
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    
-    steps:
-    - uses: actions/checkout@v3
-
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v2
-      with:
-        terraform_version: "1.2.0"
-
-    - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@v2
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
-
-    - name: Terraform Init
-      run: |
-        cd infrastructure
-        terraform init
-
-    - name: Terraform Plan
-      run: |
-        cd infrastructure
-        terraform plan -out=tfplan
-
-    - name: Terraform Apply
-      run: |
-        cd infrastructure
-        terraform apply -auto-approve tfplan 
