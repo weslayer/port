@@ -22,12 +22,17 @@ jobs:
       with:
         node-version: '18'
         cache: 'npm'
+        cache-dependency-path: 'src/package-lock.json'
 
     - name: Install Dependencies
-      run: npm ci
+      run: |
+        cd src
+        npm ci
 
     - name: Build
-      run: npm run build
+      run: |
+        cd src
+        npm run build
 
     - name: Configure AWS Credentials
       uses: aws-actions/configure-aws-credentials@v2
@@ -38,7 +43,9 @@ jobs:
 
     - name: Deploy to S3
       run: |
-        aws s3 sync dist/ s3://${{ env.S3_BUCKET }} --delete
+        aws s3 sync src/.next/static s3://${{ env.S3_BUCKET }}/_next/static --delete
+        aws s3 sync src/public s3://${{ env.S3_BUCKET }}/public --delete
+        aws s3 sync src/out s3://${{ env.S3_BUCKET }} --delete
 
     - name: Invalidate CloudFront Cache
       run: |
