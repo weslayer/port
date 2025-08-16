@@ -13,38 +13,94 @@ env:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    
+
     steps:
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-    - name: Setup Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '18'
-        cache: 'npm'
-        cache-dependency-path: 'src/package-lock.json'
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: 'src/package-lock.json'
 
-    - name: Install Dependencies
-      run: |
-        cd src
-        npm ci
+      - name: Install Dependencies
+        run: |
+          cd src
+          npm ci
 
-    - name: Build
-      run: |
-        cd src
-        npm run build
+      - name: Build
+        run: |
+          cd src
+          npm run build
 
-    - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@v2
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-    - name: Deploy to S3
-      run: |
-        aws s3 sync src/out s3://${{ env.S3_BUCKET }} --delete
+      - name: Who am I? (sanity)
+        run: aws sts get-caller-identity
 
-    - name: Invalidate CloudFront Cache
-      run: |
-        aws cloudfront create-invalidation --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} --paths "/*"
+      - name: Set CloudFront lookup hints
+        run: |
+          echo "CLOUDFRONT_ALIAS=portfolio.weslayer.xyz" >> $GITHUB_ENV
+          echo "S3_ORIGIN=weslayer-portfolio.s3.amazonaws.com" >> $GITHUB_ENV
+
+      - name: Resolve/verify CloudFront distribution ID
+        id: cf
+        env:
+          DIST_ID_SECRET: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          try_get() { aws cloudfront get-distribution --id "$1" >/dev/null 2>&1; }
+
+          DIST_ID=""
+
+          # 1) Try secret ID
+          if [[ -n "${DIST_ID_SECRET:-}" ]] && try_get "$DIST_ID_SECRET"; then
+            DIST_ID="$DIST_ID_SECRET"
+          fi
+
+          # 2) Try alias
+          if [[ -z "$DIST_ID" ]]; then
+            echo "Looking up by alias: ${CLOUDFRONT_ALIAS}"
+            CAND=$(aws cloudfront list-distributions \
+              --query "DistributionList.Items[?Aliases.Items && contains(@.Aliases.Items, '${CLOUDFRONT_ALIAS}')].Id | [0]" \
+              --output text)
+            [[ "$CAND" != "None" ]] && DIST_ID="$CAND"
+          fi
+
+          # 3) Try S3 origin
+          if [[ -z "$DIST_ID" ]]; then
+            echo "Looking up by S3 origin: ${S3_ORIGIN}"
+            CAND=$(aws cloudfront list-distributions \
+              --query "DistributionList.Items[?Origins.Items[?DomainName=='${S3_ORIGIN}']].Id | [0]" \
+              --output text)
+            [[ "$CAND" != "None" ]] && DIST_ID="$CAND"
+          fi
+
+          if [[ -z "$DIST_ID" ]]; then
+            echo "::error::Could not find a CloudFront distribution for alias ${CLOUDFRONT_ALIAS} in this AWS account. Likely wrong AWS keys in repo secrets." >&2
+            exit 1
+          fi
+
+          # Show summary (nice for logs)
+          aws cloudfront get-distribution --id "$DIST_ID" \
+            --query "Distribution.{Id:Id,Domain:DomainName,Enabled:DistributionConfig.Enabled}" \
+            --output table
+
+          echo "dist_id=$DIST_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to S3
+        run: |
+          aws s3 sync src/out s3://${{ env.S3_BUCKET }} --delete
+
+      - name: Invalidate CloudFront Cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ steps.cf.outputs.dist_id }}" \
+            --paths "/*"
